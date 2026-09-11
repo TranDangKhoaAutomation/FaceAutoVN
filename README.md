@@ -53,7 +53,7 @@
 ## 4. Installation & Configuration
 
 ```bash
-git clone https://github.com/CodeWithKhoa/FaceAutoVN.git
+git clone https://github.com/TranDangKhoaAutomation/FaceAutoVN.git
 cd FaceAutoVN
 pip install -r requirements.txt
 ```

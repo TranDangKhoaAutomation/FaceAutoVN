@@ -28,7 +28,7 @@ Bổ sung:
 - Nếu có “login_by_google” cùng “comeback” → ấn comeback ngay.
 - Nếu “page_dong_y” + “comeback” → cũng đợi xác nhận N vòng mới ấn.
 
-Tác giả: Trần Đăng Khoa (CodeWithKhoa)
+Tác giả: Trần Đăng Khoa (TranDangKhoaAutomation)
 """
 
 import os
