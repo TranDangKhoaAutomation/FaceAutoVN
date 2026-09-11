@@ -1,0 +1,11 @@
+name: Rebrand to TranDangKhoaAutomation
+on:
+  push:
+    paths: [".github/workflows/rebrand-automation.yml"]
+permissions:
+  contents: write
+jobs:
+  rebrand:
+    uses: TranDangKhoaAutomation/Codex-Plugin-Bridge/.github/workflows/rebrand-reusable.yml@main
+    permissions:
+      contents: write
