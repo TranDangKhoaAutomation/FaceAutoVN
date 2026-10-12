@@ -1,6 +1,6 @@
 ### FaceAutoVN – Automated Facebook Account, Image Processing & ADB Control Creator
 
-**FaceAutoVN** is a Python-based automation framework combining ADB control and AI-driven image processing (YOLOv10) for seamless Facebook account creation on Android devices. The solution centers on two core modules: `main.py` (workflow orchestration + on-device image SDK) and `adb.py` (ADBController).
+**FaceAutoVN** is a Python-based automation framework combining ADB control and AI-driven image processing (YOLOv10) for seamless Facebook account creation on Android devices. App code is organized under `src/faceautovn/`; launchers remain in the project root for easy running.
 
 ---
 
@@ -21,9 +21,9 @@
 
 ```plaintext
 +-----------------+       +---------------+       +-------------+
-|    main.py      | ----> |  ADBController| ----> | Android     |
-| (Orchestrator & |       |   (adb.py)    |       | Device      |
-|  Image API)     |       +---------------+       +-------------+
+| src/faceautovn/ | ----> |  ADBController| ----> | Android     |
+|    main.py      |       |    adb.py     |       | Device      |
+|  YOLO Model)    |       +---------------+       +-------------+
 |                 |               |
 |                 |               v
 |                 |       +---------------+
@@ -32,8 +32,8 @@
                           +---------------+
 ```
 
-* **main.py** orchestrates threads for screen capture, YOLO inference, and action handling.
-* **adb.py** provides atomic ADB operations: `tap()`, `long_press()`, `input_text()`, `capture_screenshot()`.
+* **src/faceautovn/main.py** orchestrates threads for screen capture, YOLO inference, and action handling.
+* **src/faceautovn/adb.py** provides atomic ADB operations: `tap()`, `long_press()`, `input_text()`, `capture_screenshot()`.
 * **Email Service**: REST API integration to `tempmail.id.vn` for disposable mailbox operations.
 
 ---
@@ -53,52 +53,108 @@
 ## 4. Installation & Configuration
 
 ```bash
-git clone https://github.com/TranDangKhoaAutomation/FaceAutoVN.git
+git clone https://github.com/TranDangKhoaTechnology/FaceAutoVN.git
 cd FaceAutoVN
 pip install -r requirements.txt
+```
+
+### Project layout
+
+```plaintext
+FaceAutoVN/
+├─ src/faceautovn/          # code Python chính
+│  ├─ main.py               # app automation chính
+│  ├─ adb.py                # ADBController
+│  ├─ test_model.py         # test model bằng console
+│  ├─ test_model_gui.py     # GUI Qt6 test model
+│  └─ legacy/               # script cũ/thử nghiệm, chưa dùng trong flow chính
+├─ data/                    # model local, ví dụ best.pt
+├─ assets/images/           # ảnh input/test tĩnh
+├─ assets/templates/        # template ảnh cho script legacy nếu cần
+├─ outputs/                 # ảnh/log sinh ra khi chạy
+├─ run_app.bat              # launcher app chính
+├─ test_model_gui.bat       # launcher GUI test model
+└─ test_model_cli.bat       # launcher test model console
 ```
 
 ### 4.1. Prerequisites
 
 * Python 3.8+
 * ADB & scrcpy (v1.16+) in PATH
-* Internet connection for REST API and HuggingFace inference
+* Internet connection for REST API and optional remote inference fallback
 * Optional: Android emulator
 
-### 4.2. Setup Parameters (`main.py`)
+### 4.2. Hồ sơ và model
 
-```python
-# Disposable email API token
-token_email = "<TEMPMAIL_TOKEN>"
-# User profile settings
-first_name, last_name, gender = "Khoa", "Tranfa", "Female"
-birth_day, birth_month, birth_year = "31", "12", "2006"
-contact_method = "email"  # email | phone
-password = "TranKhoa2006"
-# AI Inference
-model = get_model(
-    model_id="trandangkhoa/22",
-    api_key="<HUGGINGFACE_API_KEY>"
-)
-# Detection threshold
-conf_threshold = 0.2  # Filter weak predictions
-```
+`run_app.bat` hỏi **Họ** và **Tên** ở đầu mỗi lần chạy. Nhấn Enter ở từng ô để app chọn ngẫu nhiên tên tiếng Việt cho ô đó. Ngày sinh hợp lệ được chọn ngẫu nhiên trong khoảng 1990–2003. Có thể nhập trực tiếp chữ có dấu, ví dụ `Nguyễn`; app dùng Android UI Automator để điền Unicode. Chuỗi Telex như `nguyenex` không cần thiết khi nhập vào điện thoại.
+
+App ưu tiên model local `data/best.pt`. Có thể đặt biến môi trường `MODEL_PATH` để dùng file khác. Đặt `SAFE_DRY_RUN=1` để chỉ nhận diện và ghi log mà không thao tác trên điện thoại. Mặc định, app gửi thao tác thật.
+
+Để dùng API email, đặt biến môi trường `TEMPMAIL_TOKEN` hoặc tạo file `local_settings.json` ở thư mục gốc với nội dung `{"TEMPMAIL_TOKEN":"token-cua-ban"}`. File này được Git bỏ qua. Không đưa token thật vào mã nguồn.
 
 ### 4.3. Execution
 
 ```bash
-python main.py
+run_app.bat
 ```
 
+Hoặc chạy trực tiếp:
+
+```bash
+python src/faceautovn/main.py
+```
+
+* Nếu `data/best.pt` tồn tại, app tự ưu tiên dùng model local đó qua Ultralytics YOLO.
+* Có thể override đường dẫn model bằng biến môi trường `MODEL_PATH`.
 * Auto-launches scrcpy, opens OpenCV display buffer.
 * Orchestrates detection → action → email polling → confirmation cycle.
 
+### 4.4. Test model local bằng giao diện Qt6 riêng
+
+```bash
+test_model_gui.bat
+```
+
+Hoặc chạy trực tiếp:
+
+```bash
+python src/faceautovn/test_model_gui.py
+```
+
+Giao diện Qt6/PySide6 cho phép chọn `data/best.pt`, chọn ảnh test, chỉnh confidence, chạy detect nền, xem box trực tiếp, xem bảng kết quả và lưu ảnh output.
+
+Có thể tự click kiểm thử GUI + model bằng:
+
+```bash
+test_model_gui.bat --self-test
+```
+
+Hoặc:
+
+```bash
+python src/faceautovn/test_model_gui.py --self-test
+```
+
+Nếu chỉ muốn test nhanh bằng console:
+
+```bash
+test_model_cli.bat
+```
+
+Hoặc:
+
+```bash
+python src/faceautovn/test_model.py --image assets/images/imgkiemtra.png
+```
+
+Script console sẽ load `data/best.pt`, chạy predict trên ảnh test, in danh sách object phát hiện và lưu ảnh đã vẽ box tại `outputs/test_model_output.jpg`.
+
 ---
 
-## 5. ADBController API (`adb.py`)
+## 5. ADBController API (`src/faceautovn/adb.py`)
 
 ```python
-from adb import ADBController
+from src.faceautovn.adb import ADBController
 # Initialize controller
 device = ADBController(id_device=None, debug=True)
 # Screen capture
@@ -119,7 +175,7 @@ device.press_home()
 
 ---
 
-## 6. Image Processing Workflow (`main.py`)
+## 6. Image Processing Workflow (`src/faceautovn/main.py`)
 
 1. **Frame Acquisition**: `capture_screenshot()` → BGR NumPy array.
 2. **Preprocessing**: Resize to 360×800, convert to RGB PIL.
@@ -133,18 +189,25 @@ device.press_home()
 
 ### 7.1. Detection Samples
 
-![Detection Result](screenshots/detection_result.png)
+Kết quả test model hiện lưu tại:
+
+```text
+outputs/test_model_output.jpg
+outputs/test_model_gui_output.jpg
+```
+
 *Bounding boxes on Facebook UI.*
 
 ### 7.2. Automation Demo
 
-[![Watch Demo](screenshots/video_thumbnail.png)](videos/demo_registration.mp4)
-*Full-cycle automation (\~20s).*
+Nếu có video demo, đặt trong thư mục `video/` và cập nhật link tại đây.
+
+*Full-cycle automation demo depends on connected Android device/emulator.*
 
 ---
 #### TIP: 
 ```bash
-adb shell "i=0; while [ $i -lt 3000 ]; do cmd statusbar collapse >/dev/null 2>&1; am force-stop com.android.settings >/dev/null 2>&1; input keyevent KEYCODE_HOME >/dev/null 2>&1; svc wifi enable >/dev/null 2>&1; svc data enable >/dev/null 2>&1; settings put global airplane_mode_on 0 >/dev/null 2>&1; i=$((i+1)); sleep 0.1; done"c
+adb shell "i=0; while [ $i -lt 3000 ]; do cmd statusbar collapse >/dev/null 2>&1; am force-stop com.android.settings >/dev/null 2>&1; input keyevent KEYCODE_HOME >/dev/null 2>&1; svc wifi enable >/dev/null 2>&1; svc data enable >/dev/null 2>&1; settings put global airplane_mode_on 0 >/dev/null 2>&1; i=$((i+1)); sleep 0.1; done"
 ```
 
 ## 8. License & Acknowledgements

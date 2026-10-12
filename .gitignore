@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime/generated outputs
+outputs/*.png
+outputs/*.jpg
+outputs/*.jpeg
+outputs/*.webp
+outputs/*.bmp
+
+# Local/editor
+.vscode/
+*.log
+local_settings.json

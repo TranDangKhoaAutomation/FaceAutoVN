@@ -1,8 +1,15 @@
 import cv2
 import numpy as np
 import subprocess
+from pathlib import Path
 
-def capture_screen(filename="screen.png"):
+APP_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_DIR.parents[2]
+ASSETS_DIR = PROJECT_ROOT / "assets"
+OUTPUT_DIR = PROJECT_ROOT / "outputs"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+def capture_screen(filename=None):
     """Chụp ảnh màn hình từ thiết bị Android."""
     subprocess.run(["adb", "shell", "screencap", "-p", "/sdcard/screen.png"], check=True)
     subprocess.run(["adb", "pull", "/sdcard/screen.png", filename], check=True)
@@ -104,7 +111,7 @@ def find_button_in_image(template_path, image_path, threshold=0.8, scales=[2.0, 
         cv2.destroyAllWindows()
         
         # Lưu ảnh kết quả để debug
-        cv2.imwrite("debug_result.png", image_with_rectangle)
+        cv2.imwrite(str(OUTPUT_DIR / "debug_result.png"), image_with_rectangle)
         
         return True, match_percentage, top_left
     return False, best_val * 100, None
@@ -114,8 +121,8 @@ if __name__ == "__main__":
     if(1==21):
         capture_screen()
     else:
-        template_path = "img_light/register1.png"
-        image_path = "screen.png"
+        template_path = str(ASSETS_DIR / "templates" / "img_light" / "register1.png")
+        image_path = str(OUTPUT_DIR / "screen.png")
         found, percentage, position = find_button_in_image(template_path, image_path, threshold=0.9)
         if found:
             print(f"Tìm thấy với độ khớp: {percentage:.2f}% tại {position}")

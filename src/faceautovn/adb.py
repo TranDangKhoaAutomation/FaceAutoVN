@@ -1,10 +1,12 @@
 import os
-import time, subprocess
+import time, subprocess, shutil
+from pathlib import Path
 from datetime import datetime
 
 class ADBController:
     def __init__(self, id_device=None, debug=False):
         self.debug = debug
+        self.adb = shutil.which("adb") or "adb"
         if self._run_command("adb version") != 0:
             raise Exception("ADB không được cài đặt hoặc không hoạt động!")
         self.devices = self._get_connected_devices()
@@ -23,9 +25,16 @@ class ADBController:
 
     def _start_scrcpy_with_uhid(self):
         """Chạy scrcpy với --keyboard=uhid và --no-video để tránh bật bàn phím ảo"""
+        if os.getenv("APP_START_SCRCPY", "1") == "0":
+            return
         try:
             self._print("Khởi động scrcpy với --keyboard=uhid và không hiển thị hình...")
-            subprocess.Popen(["scrcpy", "--keyboard=uhid", "--no-video", "--no-window", "--serial", self.device_id])
+            bundled = Path(__file__).resolve().parents[2] / "scrcpy-win64-v3.3.1" / "scrcpy.exe"
+            scrcpy = shutil.which("scrcpy") or (str(bundled) if bundled.exists() else None)
+            if not scrcpy:
+                self._print("Khong tim thay scrcpy; tiep tuc voi ADB.")
+                return
+            subprocess.Popen([scrcpy, "--keyboard=uhid", "--no-video", "--no-window", "--serial", self.device_id])
             time.sleep(2)
         except Exception as e:
             self._print(f"Lỗi khi khởi chạy scrcpy: {e}")
@@ -138,21 +147,18 @@ class ADBController:
             return None
 
     def tap(self, x, y):
-        try:
-            self._print(f"Click vào tọa độ ({x}, {y})...")
-            self._run_adb_command(f"shell input tap {x} {y}")
-        except Exception as e:
-            self._print(f"Lỗi khi click: {str(e)}")
+        x, y = round(x), round(y)
+        self._print(f"Click vào tọa độ ({x}, {y})...")
+        subprocess.run([self.adb, "-s", self.device_id, "shell", "input", "tap", str(x), str(y)], check=True)
 
     def long_press(self, x, y, duration=1000):
-        try:
-            self._print(f"Ấn giữ tại ({x}, {y}) trong {duration}ms...")
-            self._run_adb_command(f"shell input tap {x} {y}")
-            time.sleep(duration / 1000.0)
-            self._print("Đã thả long press")
-            time.sleep(0.5)
-        except Exception as e:
-            self._print(f"Lỗi khi ấn giữ: {str(e)}")
+        x, y, duration = round(x), round(y), int(duration)
+        self._print(f"Ấn giữ tại ({x}, {y}) trong {duration}ms...")
+        subprocess.run(
+            [self.adb, "-s", self.device_id, "shell", "input", "swipe",
+             str(x), str(y), str(x), str(y), str(duration)],
+            check=True,
+        )
 
     def swipe(self, x1, y1, x2, y2, duration=500):
         try:
@@ -167,21 +173,32 @@ class ADBController:
             self._print(f"Lỗi khi lướt: {str(e)}")
 
     def input_text(self, text, delete=False):
-        """Nhập văn bản, nếu delete=True thì xóa văn bản hiện tại trước"""
-        try:
-            if delete:
-                self._print("Xóa văn bản hiện tại...")
-                for _ in range(5):
-                    self._run_adb_command("shell input keyevent 67")
-                    # time.sleep(0.05)
-                self._print("Đã xóa văn bản hiện tại")
+        """Nhập Unicode qua UI Automator, ASCII qua ADB."""
+        value = str(text)
+        if not value.isascii():
+            import uiautomator2 as u2
 
-            self._print(f"Nhập văn bản: {text}")
-            escaped_text = text.replace(" ", "%s").replace("'", "\\'")
-            self._run_adb_command(f"shell input text '{escaped_text}'")
-            # time.sleep(0.5)
-        except Exception as e:
-            self._print(f"Lỗi khi nhập văn bản: {str(e)}")
+            device = u2.connect(self.device_id)
+            field = device(className="android.widget.EditText", focused=True)
+            if field.count != 1:
+                raise RuntimeError("Khong tim thay dung mot o nhap dang duoc chon de nhap Unicode.")
+            target_text = value if delete else (field.get_text() or "") + value
+            field.set_text(target_text)
+            if field.get_text() != target_text:
+                raise RuntimeError("Nhap Unicode that bai: noi dung o nhap khong khop.")
+            self._print(f"Đã nhập Unicode ({len(value)} ký tự).")
+            return
+        if delete:
+            subprocess.run(
+                [self.adb, "-s", self.device_id, "shell", "input", "keycombination",
+                 "KEYCODE_CTRL_LEFT", "KEYCODE_A"],
+                check=True, stdout=subprocess.DEVNULL,
+            )
+        self._print(f"Nhập văn bản ({len(value)} ký tự)...")
+        subprocess.run(
+            [self.adb, "-s", self.device_id, "shell", "input", "text", value.replace(" ", "%s")],
+            check=True,
+        )
 
     def delete_left(self, count=1):
         """Xóa số ký tự về phía trái bằng phím Backspace"""

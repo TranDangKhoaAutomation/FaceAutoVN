@@ -2,6 +2,11 @@ import os, time, threading, requests, cv2
 import numpy as np
 from PIL import Image
 from inference import get_model
+import sys
+from pathlib import Path
+
+APP_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(APP_DIR.parent))
 import adb
 
 # ──────────────────────────────── CẤU HÌNH ──────────────────────────────── #
@@ -15,7 +20,7 @@ tempEmail = None  # email tạm thời
 # ──────────────────────── ADB và Mô Hình Nhận Diện ─────────────────────── #
 phone = adb.ADBController(debug=True)
 os.environ["INFERENCE_EXECUTION_PROVIDER"] = "CPUExecutionProvider"
-model = get_model(model_id="trandangkhoa/22", api_key="T5RXQmeYmh9UKFGjRAqT")
+model = get_model(model_id="trandangkhoa/22", api_key=os.getenv("REMOTE_API_KEY", ""))
 
 # ──────────────────────────────── BIẾN CHIA SẺ ───────────────────────────── #
 shared_frame, shared_predictions = None, {}
@@ -44,7 +49,7 @@ def get_temp_email():
     headers = {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer 5095|C1FnwtiVZNzxyVH0rN6nwiLx7vsLOye5ZFGMXX4cbcadefef',
+        'Authorization': 'Bearer ' + os.getenv("TEMPMAIL_TOKEN", ""),
     }
     json_data = {'user': '', 'domain': 'tempmail.ckvn.edu.vn'}
     res = requests.post('https://tempmail.id.vn/api/email/create', headers=headers, json=json_data)
@@ -58,7 +63,7 @@ def get_temp_email():
 def read_email(mail_id):
     headers = {
         'Accept': 'application/json',
-        'Authorization': 'Bearer 5095|C1FnwtiVZNzxyVH0rN6nwiLx7vsLOye5ZFGMXX4cbcadefef',
+        'Authorization': 'Bearer ' + os.getenv("TEMPMAIL_TOKEN", ""),
     }
     res = requests.get(f"https://tempmail.id.vn/api/email/{mail_id}", headers=headers)
     res.raise_for_status()

@@ -1,5 +1,7 @@
-opencv-python-headless
+opencv-python
 requests
 numpy
 Pillow
-inference
+ultralytics
+PySide6
+uiautomator2

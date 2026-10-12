@@ -28,12 +28,22 @@ Bổ sung:
 - Nếu có “login_by_google” cùng “comeback” → ấn comeback ngay.
 - Nếu “page_dong_y” + “comeback” → cũng đợi xác nhận N vòng mới ấn.
 
-Tác giả: Trần Đăng Khoa (TranDangKhoaAutomation)
+Tác giả: Trần Đăng Khoa (CodeWithKhoa)
 """
 
 import os
+import json
+import re
 import sys
 import time
+from pathlib import Path
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import threading
 import functools
 import subprocess
@@ -42,7 +52,99 @@ import cv2
 import numpy as np
 from PIL import Image
 import adb  # lớp ADBController của bạn
+from decision_engine import StartupPolicy
+from user_profile import prompt_profile
 from collections import deque
+
+APP_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_DIR.parents[1]
+DATA_DIR = PROJECT_ROOT / "data"
+OUTPUT_DIR = PROJECT_ROOT / "outputs"
+ASSETS_DIR = PROJECT_ROOT / "assets"
+DEFAULT_LOCAL_MODEL = str(DATA_DIR / "best.pt")
+MODEL_PATH = os.getenv("MODEL_PATH", DEFAULT_LOCAL_MODEL)
+REMOTE_MODEL_ID = os.getenv("REMOTE_MODEL_ID", "trandangkhoa/22")
+REMOTE_API_KEY = os.getenv("REMOTE_API_KEY", "")
+SAFE_DRY_RUN = os.getenv("SAFE_DRY_RUN", "0") == "1"
+
+
+class DryRunPhone:
+    """Cho phep chup man hinh nhung khong gui thao tac den thiet bi."""
+
+    def __init__(self, real_phone):
+        self.real_phone = real_phone
+        self.device_id = real_phone.device_id
+        self.adb = real_phone.adb
+
+    def tap(self, *args, **kwargs):
+        print(f"[DRY-RUN] tap {args}")
+
+    def long_press(self, *args, **kwargs):
+        print(f"[DRY-RUN] long_press {args}")
+
+    def input_text(self, *args, **kwargs):
+        print("[DRY-RUN] input_text")
+
+    def delete_left(self, *args, **kwargs):
+        print(f"[DRY-RUN] delete_left {args}")
+
+
+class _Prediction:
+    """Adapter chung để code phía dưới dùng được cả inference SDK và Ultralytics YOLO."""
+    def __init__(self, class_name, confidence, x, y, width, height, class_id=0):
+        self.class_name = class_name
+        self.class_id = int(class_id)
+        self.confidence = float(confidence)
+        self.x = float(x)
+        self.y = float(y)
+        self.width = float(width)
+        self.height = float(height)
+
+
+class _InferenceResult:
+    def __init__(self, predictions):
+        self.predictions = predictions
+
+
+class LocalYoloModel:
+    """Bọc file YOLO .pt local để có API `.infer(...)[0].predictions` như inference SDK."""
+    def __init__(self, model_path):
+        from ultralytics import YOLO
+        self.model_path = model_path
+        self._model = YOLO(model_path)
+
+    def infer(self, image):
+        results = self._model.predict(image, verbose=False)
+        if not results:
+            return [_InferenceResult([])]
+
+        r = results[0]
+        names = getattr(r, "names", None) or getattr(self._model, "names", {}) or {}
+        predictions = []
+        if getattr(r, "boxes", None) is not None:
+            for box in r.boxes:
+                xywh = box.xywh[0].detach().cpu().numpy().tolist()
+                cls_id = int(box.cls[0].detach().cpu().item())
+                conf = float(box.conf[0].detach().cpu().item())
+                class_name = names.get(cls_id, str(cls_id)) if isinstance(names, dict) else str(cls_id)
+                predictions.append(_Prediction(class_name, conf, xywh[0], xywh[1], xywh[2], xywh[3], cls_id))
+        return [_InferenceResult(predictions)]
+
+
+def load_ai_model():
+    """Ưu tiên đọc data/best.pt nếu có; nếu không có thì fallback về Roboflow inference SDK."""
+    if MODEL_PATH and os.path.exists(MODEL_PATH):
+        print(f"✅ Đang dùng model local: {MODEL_PATH}")
+        return LocalYoloModel(MODEL_PATH)
+
+    print("⚠️ Không tìm thấy best.pt local, fallback sang inference SDK remote.")
+    try:
+        from inference import get_model
+    except ImportError as exc:
+        raise RuntimeError(
+            "Khong tim thay model local. Hay dat data/best.pt hoac cai them goi inference."
+        ) from exc
+    return get_model(model_id=REMOTE_MODEL_ID, api_key=REMOTE_API_KEY)
 
 # ========================== DEBUG CONFIG ==========================
 DEBUG       = os.getenv("APP_DEBUG", "1") == "1"        # In log & vẽ overlay
@@ -76,10 +178,10 @@ def timeit(level: int = 2):
     return deco
 
 # ========================== CẤU HÌNH NGƯỜI DÙNG ==========================
-name, ho, gtinh = "Khoa", "Tranfa", "Nữ"   # Họ tên và giới tính
-ngay_sinh, thang_sinh, nam_sinh = "31", "12", "2006"
+name, ho, gtinh = "", "", "Nữ"   # Họ tên được nhập hoặc tạo khi chạy app
+ngay_sinh, thang_sinh, nam_sinh = "", "", ""
 sdt_or_email = "email"                     # "sdt" hoặc "email"
-matkhau = "TranKhoa2006"
+matkhau = "Khoatran2006"
 
 # Biến trạng thái toàn cục
 stop_signal = False
@@ -87,7 +189,15 @@ thoat = 0
 history = []
 flags = False
 tempEmail = None
-tokenEmail = "5140|hz51HFd1BrKQAbkQ1XXD3PDhHtZ2fXf8dejBnLBS446104c9"  # thay token của bạn trên https://tempmail.id.vn
+def _tempmail_token():
+    token = os.getenv("TEMPMAIL_TOKEN", "")
+    local_settings = PROJECT_ROOT / "local_settings.json"
+    if not token and local_settings.exists():
+        token = json.loads(local_settings.read_text(encoding="utf-8")).get("TEMPMAIL_TOKEN", "")
+    return token
+
+
+tokenEmail = _tempmail_token()
 
 # ========================== TỐI ƯU & THAM SỐ ==========================
 # Downscale khi infer (giữ tỉ lệ, không vượt quá giới hạn)
@@ -112,6 +222,7 @@ COMEBACK_CONFIRM_ROUNDS = int(os.getenv("COMEBACK_CONFIRM_ROUNDS", "3"))
 
 # ========================== SHARED BUFFERS, LOCKS, EVENTS ==========================
 shared_frame, shared_predictions = None, {}
+shared_screen_size, shared_detection_seq = (0, 0), 0
 frame_lock = threading.Lock()
 pred_lock  = threading.Lock()
 detect_request = threading.Event()  # yêu cầu detect
@@ -152,12 +263,17 @@ def get_temp_email():
     Tạo email tạm thời qua API tempmail.
     Trả về dict {"id": ..., "email": ...} hoặc raise lỗi.
     """
+    if SAFE_DRY_RUN:
+        dbg("[DRY-RUN] B? qua t?o email t?m th?t; d?ng email gi? ?? ki?m th? lu?ng.", level=1)
+        return {"id": "dry-run", "email": "dryrun@example.invalid"}
+    if not tokenEmail:
+        raise RuntimeError("TEMPMAIL_TOKEN ch?a ???c c?u h?nh.")
     headers = {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + tokenEmail,
     }
-    json_data = {'user': '', 'domain': 'tempmail.ckvn.edu.vn'}
+    json_data = {'user': '', 'domain': 'tempmail.id.vn'}
     res = requests.post('https://tempmail.id.vn/api/email/create', headers=headers, json=json_data)
     data = res.json()
     if data.get("success"):
@@ -169,22 +285,39 @@ def get_temp_email():
 def read_email(mail_id):
     """Đọc hộp thư của 1 mail_id; trả JSON."""
     headers = {'Accept': 'application/json','Authorization': 'Bearer ' + tokenEmail}
-    res = requests.get(f"https://tempmail.id.vn/api/email/{mail_id}", headers=headers)
+    res = requests.get(f"https://tempmail.id.vn/api/email/{mail_id}", headers=headers, timeout=15)
     res.raise_for_status()
     return res.json()
 
 def read_email_by_id(tempEmailDict):
-    """Poll tới khi thấy email Facebook chứa '… là mã xác nhận của bạn'. Trả về mã xác nhận."""
-    print(f"🧠 Đang đọc email tạm thời: {tempEmailDict}…")
-    while True:
-        inbox = read_email(tempEmailDict["id"])
+    """Chờ mã xác nhận; tôn trọng giới hạn tốc độ của API."""
+    print("Đang chờ email xác nhận Facebook...")
+    deadline = time.monotonic() + 600
+    rate_limit_wait = 60
+    while time.monotonic() < deadline:
+        try:
+            inbox = read_email(tempEmailDict["id"])
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code != 429:
+                raise
+            retry_after = exc.response.headers.get("Retry-After", "")
+            wait_seconds = int(retry_after) if retry_after.isdecimal() else rate_limit_wait
+            wait_seconds = max(5, min(wait_seconds, 300))
+            print(f"API giới hạn tốc độ (429); đợi {wait_seconds} giây rồi đọc lại.")
+            time.sleep(wait_seconds)
+            rate_limit_wait = min(rate_limit_wait * 2, 300)
+            continue
         data = inbox.get("data") or {}
         items = data.get("items") or []
         for item in items:
-            subj = item.get("subject", "")
-            if item.get("sender_name") == "Facebook" and " là mã xác nhận của bạn" in subj:
-                return subj.split(" là mã xác nhận của bạn")[0]
-        time.sleep(1.0)
+            subj = item.get("subject") or ""
+            sender = item.get("sender_name") or ""
+            if sender.casefold() == "facebook" and "mã xác nhận" in subj.casefold():
+                match = re.match(r"\s*(\d{4,8})\b", subj)
+                if match:
+                    return match.group(1)
+        time.sleep(6.0)
+    raise TimeoutError("Không nhận được mã xác nhận Facebook sau 10 phút.")
 
 # ========================== HIỂN THỊ (DEBUG) ==========================
 def get_color_by_class(class_id):
@@ -286,7 +419,7 @@ def detect_and_show():
     - Vẽ overlay (box, nhãn, confidence, dấu chấm tap/press) khi DEBUG=True.
     - Cập nhật shared_predictions (tọa độ full-res).
     """
-    global shared_frame, shared_predictions, stop_signal, model
+    global shared_frame, shared_predictions, shared_screen_size, shared_detection_seq, stop_signal, model
     while not stop_signal:
         if not detect_request.wait(timeout=0.1):
             continue
@@ -332,10 +465,11 @@ def detect_and_show():
                 w_full  = float(pred.width)  * inv_s
                 h_full  = float(pred.height) * inv_s
 
-                js_predictions[pred.class_name] = {
-                    "confidence": conf,
-                    "box": [cx_full, cy_full, w_full, h_full]
-                }
+                if conf > js_predictions.get(pred.class_name, {}).get("confidence", -1):
+                    js_predictions[pred.class_name] = {
+                        "confidence": conf,
+                        "box": [cx_full, cy_full, w_full, h_full]
+                    }
 
                 if DEBUG:
                     x1 = int(cx_full - w_full/2); y1 = int(cy_full - h_full/2)
@@ -354,12 +488,15 @@ def detect_and_show():
                 shared_frame = vis
             if DEBUG_SAVE:
                 try:
-                    cv2.imwrite("temp_dbg.png", shared_frame)
+                    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(str(OUTPUT_DIR / "temp_dbg.png"), shared_frame)
                 except Exception as e:
                     dbg(f"[detect] Không lưu temp_dbg.png: {e}", level=2)
 
         with pred_lock:
             shared_predictions = js_predictions
+            shared_screen_size = (bgr_full.shape[1], bgr_full.shape[0])
+            shared_detection_seq += 1
 
         detect_done.set()
 
@@ -399,6 +536,9 @@ def handle_actions():
     - Thêm cơ chế xác nhận nhiều vòng cho 'comeback' khi nó xuất hiện một mình.
     """
     global stop_signal, shared_predictions, history, flags, tempEmail, thoat, comeback_only_count
+    last_empty_notice = 0.0
+    startup_policy = StartupPolicy()
+    name_submission_pending_at = None
     dbg("📌 [handle_actions] Started", level=1)
 
     # Ảnh đầu tiên
@@ -409,32 +549,44 @@ def handle_actions():
 
         with pred_lock:
             js_predictions = dict(shared_predictions)
+            screen_size = shared_screen_size
+            detection_seq = shared_detection_seq
+
+        startup_action = startup_policy.observe(js_predictions, screen_size, detection_seq)
 
         if not js_predictions:
             thoat = min(thoat + 1, 3)
-            time.sleep(0.05)
+            if time.monotonic() - last_empty_notice >= 10.0:
+                print("[detect] Khong thay thanh phan UI phu hop. Hay mo man hinh dang ky Facebook tren dien thoai.")
+                last_empty_notice = time.monotonic()
+            time.sleep(0.5)
             continue
 
+        last_empty_notice = 0.0
         dbg(f"🔍 Predictions: {list(js_predictions.keys())}", level=1)
         handled = False
 
-        # ====== 1) TRANG ĐẦU / TẠO TÀI KHOẢN ======
-        if all(k in js_predictions for k in ["button_tao_tai_khoan_moi", "facebook"]):
-            cx, cy, *_ = js_predictions["button_tao_tai_khoan_moi"]["box"]
-            tap_and_detect(cx, cy)
-            dbg("✅ Nhấn 'Tạo tài khoản mới'", level=1)
-            handled = True
-            continue
-
-        if all(k in js_predictions for k in ["tham_gia_Facebook", "button_tao_tai_khoan_moi"]):
-            cx, cy, *_ = js_predictions["button_tao_tai_khoan_moi"]["box"]
-            tap_and_detect(cx, cy)
-            dbg("✅ Trang 'Tham gia Facebook' → Tạo tài khoản", level=1)
+        # ====== 1) MÀN HÌNH BẮT ĐẦU: CHẤM ĐIỂM + XÁC NHẬN NHIỀU KHUNG ======
+        if startup_action:
+            startup_policy.mark_action_done(startup_action.target)
+            dbg(f"🧠 {startup_action.state}: {startup_action.reason}, score={startup_action.score:.2f}", level=1)
+            tap_and_detect(startup_action.x, startup_action.y)
+            dbg(f"✅ Nhấn {startup_action.target}", level=1)
             handled = True
             continue
 
         # ====== 2) NHẬP HỌ TÊN ======
-        if all(k in js_predictions for k in ["nhap_ho_ten", "input_ten", "input_ho", "next"]):
+        name_screen = all(k in js_predictions for k in ["nhap_ho_ten", "input_ten", "input_ho", "next"])
+        if not name_screen:
+            name_submission_pending_at = None
+        if name_screen:
+            if name_submission_pending_at is not None:
+                if time.monotonic() - name_submission_pending_at < 4.0:
+                    time.sleep(0.5)
+                    continue
+                print("Màn hình họ tên chưa chuyển sau khi nhấn Tiếp; dừng để tránh nhập lặp.")
+                stop_signal = True
+                break
             cx, cy, *_ = js_predictions["input_ten"]["box"]
             tap_and_detect(cx, cy)
             phone.input_text(name, True); time.sleep(UI_DELAY_TYPE)
@@ -445,6 +597,7 @@ def handle_actions():
 
             cx, cy, *_ = js_predictions["next"]["box"]
             tap_and_detect(cx, cy)
+            name_submission_pending_at = time.monotonic()
             dbg("✅ Nhập họ tên xong", level=1)
             handled = True
             continue
@@ -729,15 +882,25 @@ if __name__ == "__main__":
     3) Warm-up model.
     4) Khởi động threads và chạy handle_actions().
     """
+    ho, name, birth_date = prompt_profile()
+    ngay_sinh, thang_sinh, nam_sinh = (
+        str(birth_date.day), str(birth_date.month), str(birth_date.year)
+    )
+
     # 1) INIT ADB — BẮT LỖI & THOÁT ÊM KHI KHÔNG CÓ THIẾT BỊ
     try:
         # Nếu ADBController cho truyền adb_bin/device_id, bạn có thể dùng:
         # phone = adb.ADBController(adb_bin=r"C:\Users\trand\scrcpy\adb.exe", device_id=None, debug=True)
-        phone = adb.ADBController(debug=True)
-    except Exception:
-        print("⚠️ Không có thiết bị Android được kết nối!")
-        print("👉 Hãy bật USB debugging và chạy: C:\\Users\\trand\\scrcpy\\adb.exe devices -l")
-        sys.exit(0)  # Thoát êm, không traceback
+        real_phone = adb.ADBController(debug=True)
+        phone = DryRunPhone(real_phone) if SAFE_DRY_RUN else real_phone
+        if SAFE_DRY_RUN:
+            print("SAFE_DRY_RUN dang bat: app chi chup/detect/log, khong thao tac tren dien thoai.")
+        else:
+            print("Che do thao tac that dang bat: lenh tap/nhap se duoc gui den dien thoai.")
+    except Exception as exc:
+        print(f"Khong the khoi tao ADB: {exc}")
+        print("Hay bat USB debugging, ket noi dien thoai va chay: adb devices -l")
+        sys.exit(1)
 
     # 2) CHỈ KHI ADB OK MỚI LOAD MÔ HÌNH (GIẢM CẢNH BÁO)
     os.environ.setdefault("INFERENCE_EXECUTION_PROVIDER", "CPUExecutionProvider")
@@ -750,8 +913,7 @@ if __name__ == "__main__":
     ]:
         os.environ.setdefault(k, "False")
 
-    from inference import get_model
-    model = get_model(model_id="trandangkhoa/22", api_key="T5RXQmeYmh9UKFGjRAqT")
+    model = load_ai_model()
 
     # 3) WARM-UP MODEL (cache graph)
     try:

@@ -1,5 +1,6 @@
+import os
 import requests
-tokenEmail = "5140|hz51HFd1BrKQAbkQ1XXD3PDhHtZ2fXf8dejBnLBS446104c9"
+tokenEmail = os.getenv("TEMPMAIL_TOKEN", "")
 def get_temp_email():
     global tokenEmail
     headers = {

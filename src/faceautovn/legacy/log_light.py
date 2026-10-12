@@ -4,6 +4,13 @@ import time
 import cv2
 import numpy as np
 import pytesseract
+from pathlib import Path
+
+APP_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_DIR.parents[2]
+ASSETS_DIR = PROJECT_ROOT / "assets"
+OUTPUT_DIR = PROJECT_ROOT / "outputs"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Đường dẫn đến Tesseract (nếu cần, thay đổi tùy hệ điều hành)
 # Ví dụ: pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -165,7 +172,7 @@ def input_text(text, vi=False):
         print(f"❌ Lỗi không xác định: {e}")
         return False
 
-def capture_screen(filename="screen.png"):
+def capture_screen(filename=None):
     """Chụp ảnh màn hình từ thiết bị Android."""
     subprocess.run(["adb", "shell", "screencap", "-p", "/sdcard/screen.png"], check=True)
     subprocess.run(["adb", "pull", "/sdcard/screen.png", filename], check=True)
@@ -210,7 +217,7 @@ def find_button(image_name, threshold=0.7):
         print("❌ Lỗi khi đọc ảnh màn hình.")
         return None
 
-    template_path = f"img_light/{image_name}.png"
+    template_path = str(ASSETS_DIR / "templates" / "img_light" / f"{image_name}.png")
     if not os.path.exists(template_path):
         print(f"⚠️ Không tìm thấy mẫu ảnh: {template_path}")
         return None

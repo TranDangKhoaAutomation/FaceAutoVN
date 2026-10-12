@@ -5,6 +5,13 @@ import urllib.parse
 import time
 import cv2
 import numpy as np
+from pathlib import Path
+
+APP_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_DIR.parents[2]
+ASSETS_DIR = PROJECT_ROOT / "assets"
+OUTPUT_DIR = PROJECT_ROOT / "outputs"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def check_adb():
     """Kiểm tra xem ADB đã được cài đặt chưa"""
@@ -68,7 +75,7 @@ def swipe_down(width, height):
     subprocess.run(["adb", "shell", "input", "swipe", str(width // 2), str(height - 300),
                     str(width // 2), "300", "500"], check=True)
 
-def capture_screen(filename="screen.png"):
+def capture_screen(filename=None):
     """Chụp ảnh màn hình từ thiết bị Android"""
     subprocess.run(["adb", "shell", "screencap", "-p", "/sdcard/screen.png"], check=True)
     subprocess.run(["adb", "pull", "/sdcard/screen.png", filename], check=True)
@@ -84,7 +91,7 @@ def find_like_button(threshold=0.7):
         return None
 
     templates = {
-        "like": "img/like.png",
+        "like": str(ASSETS_DIR / "templates" / "img" / "like.png"),
     }
 
     best_match = None
