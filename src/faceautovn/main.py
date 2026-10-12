@@ -273,7 +273,7 @@ def get_temp_email():
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + tokenEmail,
     }
-    json_data = {'user': '', 'domain': 'tempmail.id.vn'}
+    json_data = {'user': '', 'domain': 'hathitrannhien.edu.vn'}
     res = requests.post('https://tempmail.id.vn/api/email/create', headers=headers, json=json_data)
     data = res.json()
     if data.get("success"):
