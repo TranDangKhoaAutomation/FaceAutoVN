@@ -172,21 +172,29 @@ class ADBController:
         except Exception as e:
             self._print(f"Lỗi khi lướt: {str(e)}")
 
-    def input_text(self, text, delete=False):
-        """Nhập Unicode qua UI Automator, ASCII qua ADB."""
+    def input_text(self, text, delete=False, field_index=None):
+        """Nhập vào ô chỉ định qua UI Automator; ô focus mặc định cho Unicode."""
         value = str(text)
-        if not value.isascii():
+        if field_index is not None or not value.isascii():
             import uiautomator2 as u2
 
             device = u2.connect(self.device_id)
-            field = device(className="android.widget.EditText", focused=True)
-            if field.count != 1:
-                raise RuntimeError("Khong tim thay dung mot o nhap dang duoc chon de nhap Unicode.")
+            if field_index is None:
+                field = device(className="android.widget.EditText", focused=True)
+                if field.count != 1:
+                    raise RuntimeError("Không tìm thấy đúng một ô nhập đang được chọn.")
+            else:
+                selector = device(className="android.widget.EditText")
+                fields = [selector[i] for i in range(selector.count)]
+                fields.sort(key=lambda item: (item.info["bounds"]["top"], item.info["bounds"]["left"]))
+                if len(fields) != 2 or field_index not in (0, 1):
+                    raise RuntimeError(f"Cần đúng 2 ô Họ/Tên, hiện thấy {len(fields)} ô.")
+                field = fields[field_index]
             target_text = value if delete else (field.get_text() or "") + value
             field.set_text(target_text)
             if field.get_text() != target_text:
-                raise RuntimeError("Nhap Unicode that bai: noi dung o nhap khong khop.")
-            self._print(f"Đã nhập Unicode ({len(value)} ký tự).")
+                raise RuntimeError("Nhập văn bản thất bại: nội dung ô nhập không khớp.")
+            self._print(f"Đã nhập văn bản ({len(value)} ký tự) vào ô được chọn.")
             return
         if delete:
             subprocess.run(

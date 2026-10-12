@@ -587,13 +587,8 @@ def handle_actions():
                 print("Màn hình họ tên chưa chuyển sau khi nhấn Tiếp; dừng để tránh nhập lặp.")
                 stop_signal = True
                 break
-            cx, cy, *_ = js_predictions["input_ten"]["box"]
-            tap_and_detect(cx, cy)
-            phone.input_text(name, True); time.sleep(UI_DELAY_TYPE)
-
-            cx, cy, *_ = js_predictions["input_ho"]["box"]
-            tap_and_detect(cx, cy)
-            phone.input_text(ho, True); time.sleep(UI_DELAY_TYPE)
+            phone.input_text(ho, True, field_index=0); time.sleep(UI_DELAY_TYPE)
+            phone.input_text(name, True, field_index=1); time.sleep(UI_DELAY_TYPE)
 
             cx, cy, *_ = js_predictions["next"]["box"]
             tap_and_detect(cx, cy)
